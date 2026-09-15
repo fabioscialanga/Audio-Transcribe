@@ -14,7 +14,7 @@ Windows desktop app per trascrivere rapidamente file audio in testo, con priorit
 
 ## Formati supportati
 
-MP3, WAV, M4A, AAC, FLAC, OGG, MP4, MOV, MKV.
+MP3, WAV, M4A, AAC, FLAC, OGG, MP4, MOV, MKV, WEBM.
 
 ## Requisiti
 
@@ -34,9 +34,13 @@ python main.py
 
 Al primo utilizzo faster-whisper scarica il modello selezionato.
 
-## Note sulla qualità
+## Modelli
 
-L'app usa per default il modello `large-v3` quando è disponibile una GPU NVIDIA e `medium` su CPU. Puoi cambiare il modello dall'interfaccia.
+L'interfaccia parte dal modello `medium`, un buon compromesso tra qualità e velocità.
+
+Per privilegiare ulteriormente la qualità puoi selezionare `large-v3`. Su CPU sarà sensibilmente più lento.
+
+## Note sulla qualità
 
 Per privilegiare la fedeltà:
 - lingua italiana impostata esplicitamente
@@ -44,3 +48,15 @@ Per privilegiare la fedeltà:
 - VAD
 - temperatura 0
 - contextual prompt opzionale per termini tecnici
+
+## Build Windows
+
+```powershell
+.\build_windows.ps1
+```
+
+L'eseguibile viene generato in:
+
+```
+dist\AudioTranscribe\AudioTranscribe.exe
+```
