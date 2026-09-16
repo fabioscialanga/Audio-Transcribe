@@ -6,7 +6,7 @@ accurato e completamente locale. Nessun file viene caricato online.
 ## Funzionalità
 
 - drag & drop di audio e video;
-- trascrizione locale con `faster-whisper`;
+- trascrizione locale con `whisper.cpp` quantizzato oppure `faster-whisper`;
 - rilevamento automatico della lingua o selezione manuale;
 - traduzione diretta in inglese;
 - rilevamento GPU NVIDIA con fallback CPU;
@@ -17,6 +17,11 @@ accurato e completamente locale. Nessun file viene caricato online.
 - preferenze memorizzate tra un avvio e l'altro;
 - nessuna dipendenza da FFmpeg installato nel sistema (PyAV è incluso).
 - download dei modelli compatibile con il trust store certificati di Windows.
+
+Il motore predefinito `whisper.cpp` scarica al primo utilizzo la build ufficiale
+Windows x64 con BLAS e il modello quantizzato selezionato. I file vengono
+verificati tramite SHA-256 e salvati nella cartella dati locale dell'utente.
+Non servono account, chiavi API o servizi cloud.
 
 Formati principali: MP3, WAV, M4A, AAC, FLAC, OGG, OPUS, MP4, MOV, MKV,
 WEBM, AVI, MPEG e MPG.
@@ -45,7 +50,7 @@ alta, ma richiede più memoria e tempo, soprattutto su CPU.
 Lo script crea:
 
 - `dist\AudioTranscribe-portable-win64.zip`, versione portabile;
-- `dist\installer\AudioTranscribe-Setup-1.1.1.exe`, installer per utente se
+- `dist\installer\AudioTranscribe-Setup-1.2.0.exe`, installer per utente se
   [Inno Setup 6](https://jrsoftware.org/isinfo.php) è installato.
 
 L'installer non richiede privilegi di amministratore e aggiunge il collegamento

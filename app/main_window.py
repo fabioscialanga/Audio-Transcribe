@@ -31,6 +31,12 @@ MODEL_INFO = {
     "large-v3": "Massima qualità · ~3 GB",
 }
 
+WHISPER_CPP_MODEL_INFO = {
+    "tiny": "Massima velocità · quantizzato · ~32 MB",
+    "base": "Consigliato · quantizzato · ~60 MB",
+    "small": "Qualità superiore · quantizzato · ~190 MB",
+}
+
 
 def _human_size(size: int) -> str:
     value = float(size)
@@ -154,23 +160,26 @@ class MainWindow(QMainWindow):
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(7)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        grid.addWidget(QLabel("Modello"), 0, 0)
-        grid.addWidget(QLabel("Lingua"), 0, 1)
+        for column in range(3):
+            grid.setColumnStretch(column, 1)
+        grid.addWidget(QLabel("Motore"), 0, 0)
+        grid.addWidget(QLabel("Modello"), 0, 1)
+        grid.addWidget(QLabel("Lingua"), 0, 2)
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItem("whisper.cpp · rapido", "whisper_cpp")
+        self.engine_combo.addItem("faster-whisper · compatibilità", "faster_whisper")
+        self.engine_combo.currentIndexChanged.connect(self._update_engine_options)
         self.model_combo = QComboBox()
-        for model, hint in MODEL_INFO.items():
-            self.model_combo.addItem(model, model)
-            self.model_combo.setItemData(self.model_combo.count() - 1, hint, Qt.ItemDataRole.ToolTipRole)
         self.model_combo.currentTextChanged.connect(self._update_model_hint)
         self.language_combo = QComboBox()
         for label, code in LANGUAGES:
             self.language_combo.addItem(label, code)
-        grid.addWidget(self.model_combo, 1, 0)
-        grid.addWidget(self.language_combo, 1, 1)
+        grid.addWidget(self.engine_combo, 1, 0)
+        grid.addWidget(self.model_combo, 1, 1)
+        grid.addWidget(self.language_combo, 1, 2)
         self.model_hint = QLabel()
         self.model_hint.setObjectName("muted")
-        grid.addWidget(self.model_hint, 2, 0, 1, 2)
+        grid.addWidget(self.model_hint, 2, 0, 1, 3)
 
         grid.addWidget(QLabel("Operazione"), 3, 0)
         grid.addWidget(QLabel("Precisione"), 3, 1)
@@ -194,7 +203,8 @@ class MainWindow(QMainWindow):
         self.prompt_input.setPlaceholderText("Nomi propri, sigle, termini tecnici…")
         self.prompt_input.setClearButtonEnabled(True)
         settings_layout.addWidget(self.prompt_input)
-        for control in (self.model_combo, self.language_combo, self.task_combo, self.beam_spin, self.prompt_input):
+        for control in (self.engine_combo, self.model_combo, self.language_combo, self.task_combo,
+                        self.beam_spin, self.prompt_input):
             control.setMinimumHeight(38)
         layout.addWidget(settings_card)
 
@@ -268,12 +278,18 @@ class MainWindow(QMainWindow):
         return card
 
     def _restore_settings(self) -> None:
-        self.model_combo.setCurrentText(self.settings.value("model", "small"))
+        has_saved_engine = self.settings.contains("engine")
+        engine = self.settings.value("engine", "whisper_cpp")
+        self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(engine)))
+        self._update_engine_options()
+        saved_model = self.settings.value("model", "base") if has_saved_engine else "base"
+        self.model_combo.setCurrentText(saved_model)
         language = self.settings.value("language", "")
         index = self.language_combo.findData(language or None)
         self.language_combo.setCurrentIndex(max(0, index))
         self.task_combo.setCurrentIndex(max(0, self.task_combo.findData(self.settings.value("task", "transcribe"))))
-        self.beam_spin.setValue(int(self.settings.value("beam", 5)))
+        saved_beam = int(self.settings.value("beam", 5)) if has_saved_engine else 3
+        self.beam_spin.setValue(saved_beam)
         self.vad_check.setChecked(self.settings.value("vad", True, type=bool))
         self.prompt_input.setText(self.settings.value("prompt", ""))
         geometry = self.settings.value("geometry")
@@ -282,6 +298,7 @@ class MainWindow(QMainWindow):
         self._update_model_hint(self.model_combo.currentText())
 
     def _save_settings(self) -> None:
+        self.settings.setValue("engine", self.engine_combo.currentData())
         self.settings.setValue("model", self.model_combo.currentText())
         self.settings.setValue("language", self.language_combo.currentData() or "")
         self.settings.setValue("task", self.task_combo.currentData())
@@ -291,9 +308,32 @@ class MainWindow(QMainWindow):
         self.settings.setValue("geometry", self.saveGeometry())
 
     def _update_model_hint(self, model: str) -> None:
-        self.model_hint.setText(MODEL_INFO.get(model, ""))
+        info = WHISPER_CPP_MODEL_INFO if self.engine_combo.currentData() == "whisper_cpp" else MODEL_INFO
+        self.model_hint.setText(info.get(model, ""))
+
+    def _update_engine_options(self) -> None:
+        if not hasattr(self, "model_combo"):
+            return
+        previous = self.model_combo.currentText()
+        info = WHISPER_CPP_MODEL_INFO if self.engine_combo.currentData() == "whisper_cpp" else MODEL_INFO
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        for model, hint in info.items():
+            self.model_combo.addItem(model, model)
+            self.model_combo.setItemData(self.model_combo.count() - 1, hint, Qt.ItemDataRole.ToolTipRole)
+        preferred = previous if previous in info else ("base" if "base" in info else next(iter(info)))
+        self.model_combo.setCurrentText(preferred)
+        self.model_combo.blockSignals(False)
+        self._update_model_hint(preferred)
+        self._update_compute_badge()
 
     def _update_compute_badge(self) -> None:
+        if hasattr(self, "engine_combo") and self.engine_combo.currentData() == "whisper_cpp":
+            self.compute_badge.setText("●  CPU · whisper.cpp BLAS")
+            self.compute_badge.setProperty("device", "cpu")
+            self.compute_badge.style().unpolish(self.compute_badge)
+            self.compute_badge.style().polish(self.compute_badge)
+            return
         device, compute_type = detect_compute_device()
         if device == "cuda":
             self.compute_badge.setText("●  GPU NVIDIA · CUDA FP16")
@@ -342,7 +382,8 @@ class MainWindow(QMainWindow):
         self._set_running(True)
 
         options = TranscriptionOptions(
-            model_name=self.model_combo.currentText(), language=self.language_combo.currentData(),
+            engine=self.engine_combo.currentData(), model_name=self.model_combo.currentText(),
+            language=self.language_combo.currentData(),
             task=self.task_combo.currentData(), initial_prompt=self.prompt_input.text().strip(),
             beam_size=self.beam_spin.value(), vad_filter=self.vad_check.isChecked(),
         )
@@ -368,7 +409,7 @@ class MainWindow(QMainWindow):
     def _set_running(self, running: bool) -> None:
         self.transcribe_button.setEnabled(bool(self.file_path) and not running)
         self.cancel_button.setVisible(running)
-        for widget in (self.drop_area, self.model_combo, self.language_combo, self.task_combo,
+        for widget in (self.drop_area, self.engine_combo, self.model_combo, self.language_combo, self.task_combo,
                        self.beam_spin, self.vad_check, self.prompt_input):
             widget.setEnabled(not running)
 

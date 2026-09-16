@@ -11,7 +11,8 @@ from faster_whisper import WhisperModel
 
 @dataclass(slots=True)
 class TranscriptionOptions:
-    model_name: str = "small"
+    engine: str = "whisper_cpp"
+    model_name: str = "base"
     language: str | None = None
     task: str = "transcribe"
     initial_prompt: str = ""
@@ -81,11 +82,19 @@ class LocalTranscriber:
     def __init__(self, options: TranscriptionOptions):
         self.options = options
         self.device, self.compute_type = detect_compute_device()
+
+        # Limit model size for systems with limited memory
+        model_name = options.model_name
+        if self.device == "cpu" and model_name not in ("tiny", "base", "small"):
+            # On CPU, limit to smaller models to avoid memory issues
+            model_name = "base"
+
         try:
             self.model = WhisperModel(
-                options.model_name,
+                model_name,
                 device=self.device,
                 compute_type=self.compute_type,
+                cpu_threads=4,  # Limit CPU threads to reduce memory footprint
             )
         except Exception:
             # A driver can expose the GPU even when the CUDA/cuDNN runtime needed by
@@ -114,14 +123,15 @@ class LocalTranscriber:
             str(path),
             language=self.options.language,
             task=self.options.task,
-            beam_size=self.options.beam_size,
-            best_of=self.options.beam_size,
+            beam_size=max(1, min(self.options.beam_size, 3)),  # Limit beam_size for memory
+            best_of=max(1, min(self.options.beam_size, 3)),    # Limit best_of for memory
             temperature=(0.0, 0.2, 0.4),
             repetition_penalty=1.12,
             no_repeat_ngram_size=3,
             vad_filter=self.options.vad_filter,
             vad_parameters={"min_silence_duration_ms": 500},
             word_timestamps=False,
+            chunk_length=30,  # Process audio in 30-second chunks
             # This specifically prevents Whisper from carrying a repetition loop
             # from one 30-second window into every following window.
             condition_on_previous_text=False,
