@@ -1,62 +1,53 @@
 # Audio Transcribe
 
-Windows desktop app per trascrivere rapidamente file audio in testo, con priorità alla fedeltà della trascrizione.
+Applicazione desktop Windows per trascrivere e tradurre file audio/video in modo
+accurato e completamente locale. Nessun file viene caricato online.
 
-## MVP
+## Funzionalità
 
-- Drag & drop di file audio/video
-- Trascrizione locale con faster-whisper
-- Rilevamento automatico GPU NVIDIA con fallback CPU
-- Visualizzazione del testo trascritto
-- Copia negli appunti
-- Export in file .txt
-- Nessun upload cloud: elaborazione locale
+- drag & drop di audio e video;
+- trascrizione locale con `faster-whisper`;
+- rilevamento automatico della lingua o selezione manuale;
+- traduzione diretta in inglese;
+- rilevamento GPU NVIDIA con fallback CPU;
+- testo mostrato in tempo reale e modificabile;
+- glossario contestuale, beam search regolabile e filtro dei silenzi;
+- annullamento della trascrizione;
+- esportazione in TXT, SRT, WebVTT e JSON;
+- preferenze memorizzate tra un avvio e l'altro;
+- nessuna dipendenza da FFmpeg installato nel sistema (PyAV è incluso).
+- download dei modelli compatibile con il trust store certificati di Windows.
 
-## Formati supportati
+Formati principali: MP3, WAV, M4A, AAC, FLAC, OGG, OPUS, MP4, MOV, MKV,
+WEBM, AVI, MPEG e MPG.
 
-MP3, WAV, M4A, AAC, FLAC, OGG, MP4, MOV, MKV, WEBM.
+## Avvio per lo sviluppo
 
-## Requisiti
-
-- Windows 10/11
-- Python 3.11 consigliato
-- FFmpeg disponibile nel PATH
-- GPU NVIDIA opzionale
-
-## Avvio
+È consigliato Python 3.11 x64 su Windows 10 o 11.
 
 ```powershell
-python -m venv .venv
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python main.py
 ```
 
-Al primo utilizzo faster-whisper scarica il modello selezionato.
+Al primo utilizzo viene scaricato soltanto il modello Whisper selezionato. Il
+modello `small` è il compromesso consigliato; `large-v3` offre la qualità più
+alta, ma richiede più memoria e tempo, soprattutto su CPU.
 
-## Modelli
-
-L'interfaccia parte dal modello `medium`, un buon compromesso tra qualità e velocità.
-
-Per privilegiare ulteriormente la qualità puoi selezionare `large-v3`. Su CPU sarà sensibilmente più lento.
-
-## Note sulla qualità
-
-Per privilegiare la fedeltà:
-- lingua italiana impostata esplicitamente
-- beam search
-- VAD
-- temperatura 0
-- contextual prompt opzionale per termini tecnici
-
-## Build Windows
+## Creare i pacchetti Windows
 
 ```powershell
 .\build_windows.ps1
 ```
 
-L'eseguibile viene generato in:
+Lo script crea:
 
-```
-dist\AudioTranscribe\AudioTranscribe.exe
-```
+- `dist\AudioTranscribe-portable-win64.zip`, versione portabile;
+- `dist\installer\AudioTranscribe-Setup-1.1.1.exe`, installer per utente se
+  [Inno Setup 6](https://jrsoftware.org/isinfo.php) è installato.
+
+L'installer non richiede privilegi di amministratore e aggiunge il collegamento
+al menu Start. I modelli non vengono incorporati, mantenendo ragionevole la
+dimensione del download.
