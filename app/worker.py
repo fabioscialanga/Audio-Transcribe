@@ -58,6 +58,8 @@ class TranscriptionWorker(QObject):
             if self.options.engine == "whisper_cpp":
                 kwargs["stage_callback"] = self.stageChanged.emit
             result = transcriber.transcribe(self.file_path, **kwargs)
+            if self._cancel_requested:
+                raise TranscriptionCancelled()
             self.progress.emit(100)
             self.finished.emit(result, transcriber.device)
         except TranscriptionCancelled:

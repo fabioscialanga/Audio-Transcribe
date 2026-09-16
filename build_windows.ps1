@@ -75,7 +75,7 @@ if (-not $SkipInstaller) {
         Write-Host "Creazione installer Windows..."
         & $iscc "installer\AudioTranscribe.iss"
         if ($LASTEXITCODE -ne 0) { throw "Creazione installer non riuscita." }
-        Write-Host "Installer: dist\installer\AudioTranscribe-Setup-1.2.0.exe"
+        Write-Host "Installer: dist\installer\AudioTranscribe-Setup-1.2.1.exe"
     } else {
         Write-Warning "Inno Setup 6 non trovato: creato solo il pacchetto portabile."
         Write-Warning "Installa Inno Setup 6 e riesegui lo script per ottenere il setup .exe."

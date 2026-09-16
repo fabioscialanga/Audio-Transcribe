@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import deque
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import shutil
+from queue import Queue, Empty
+from threading import Thread
 import subprocess
 import tempfile
 from typing import Callable
@@ -67,6 +69,66 @@ VAD_SHA256 = "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987"
 StageCallback = Callable[[str], None]
 ProgressCallback = Callable[[int], None]
 CancelCallback = Callable[[], bool]
+
+
+def _run_command(command, cwd, should_cancel=None, on_line=None):
+    """Drain output separately so cancellation also works for silent processes."""
+    process = subprocess.Popen(
+        command, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace",
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    lines = Queue(maxsize=256)
+    tail = deque(maxlen=12)
+
+    def read_output():
+        try:
+            for line in process.stdout:
+                lines.put(line)
+        finally:
+            lines.put(None)
+
+    reader = Thread(target=read_output, daemon=True)
+    reader.start()
+    try:
+        while True:
+            if should_cancel and should_cancel():
+                raise TranscriptionCancelled("Trascrizione annullata")
+            try:
+                line = lines.get(timeout=0.1)
+            except Empty:
+                continue
+            if line is None:
+                break
+            tail.append(line)
+            if on_line:
+                on_line(line)
+        while process.poll() is None:
+            if should_cancel and should_cancel():
+                raise TranscriptionCancelled("Trascrizione annullata")
+            try:
+                process.wait(timeout=0.1)
+            except subprocess.TimeoutExpired:
+                pass
+        if process.returncode:
+            details = "".join(tail).strip()
+            raise RuntimeError(f"whisper.cpp non è riuscito (codice {process.returncode}).\n{details}")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        # Drain the bounded queue while the reader completes, including on cancellation.
+        while reader.is_alive():
+            try:
+                lines.get(timeout=0.1)
+            except Empty:
+                pass
+        reader.join()
+        process.stdout.close()
 
 
 def whisper_cpp_cache_dir() -> Path:
@@ -350,38 +412,14 @@ class WhisperCppTranscriber:
                 if vad_model:
                     command.extend(["--vad", "--vad-model", str(vad_model)])
 
-                creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                process = subprocess.Popen(
-                    command,
-                    cwd=str(executable.parent),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    creationflags=creation_flags,
-                )
-                output_lines: list[str] = []
-                assert process.stdout is not None
-                try:
-                    for line in process.stdout:
-                        output_lines.append(line)
-                        if should_cancel and should_cancel():
-                            process.terminate()
-                            raise TranscriptionCancelled("Trascrizione annullata")
-                        match = re.search(r"progress\s*=\s*(\d+)%", line)
-                        if match and progress_callback:
-                            local_progress = max(0, min(100, int(match.group(1))))
-                            overall = max(1, min(99, int(((index + local_progress / 100) / len(chunks)) * 100)))
-                            progress_callback(overall, float(overall), 100.0)
-                    exit_code = process.wait()
-                finally:
-                    if process.poll() is None:
-                        process.terminate()
+                def on_line(line):
+                    match = re.search(r"progress\s*=\s*(\d+)%", line)
+                    if match and progress_callback:
+                        local_progress = max(0, min(100, int(match.group(1))))
+                        overall = max(1, min(99, int(((index + local_progress / 100) / len(chunks)) * 100)))
+                        progress_callback(overall, float(overall), 100.0)
 
-                if exit_code != 0:
-                    details = "".join(output_lines[-12:]).strip()
-                    raise RuntimeError(f"whisper.cpp non è riuscito (codice {exit_code}).\n{details}")
+                _run_command(command, executable.parent, should_cancel, on_line)
                 output_path = output_base.with_suffix(".json")
                 if not output_path.is_file():
                     raise RuntimeError("whisper.cpp non ha prodotto il file di risultato")

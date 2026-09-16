@@ -1,5 +1,16 @@
 # Audio Transcribe
 
+## Aggiornamento 1.2.1
+
+- Impostazioni su due colonne, motore a larghezza piena e pannello scorrevole per schermi piccoli.
+- Annullamento di whisper.cpp anche quando il processo non emette messaggi; log in memoria limitato.
+- Conferma prima di eliminare testo non esportato e protezione dell'editor durante l'elaborazione.
+- Export con gestione degli errori di scrittura e controllo della corrispondenza fra testo e timestamp.
+- faster-whisper rispetta modello e precisione scelti anche su CPU: modelli grandi richiedono più RAM.
+
+Le modifiche libere al testo sono esportabili in TXT. SRT, VTT e JSON con segmenti
+richiedono che il testo corrisponda ancora ai timestamp della trascrizione originale.
+
 Applicazione desktop Windows per trascrivere e tradurre file audio/video in modo
 accurato e completamente locale. Nessun file viene caricato online.
 
@@ -50,7 +61,7 @@ alta, ma richiede più memoria e tempo, soprattutto su CPU.
 Lo script crea:
 
 - `dist\AudioTranscribe-portable-win64.zip`, versione portabile;
-- `dist\installer\AudioTranscribe-Setup-1.2.0.exe`, installer per utente se
+- `dist\installer\AudioTranscribe-Setup-1.2.1.exe`, installer per utente se
   [Inno Setup 6](https://jrsoftware.org/isinfo.php) è installato.
 
 L'installer non richiede privilegi di amministratore e aggiunge il collegamento

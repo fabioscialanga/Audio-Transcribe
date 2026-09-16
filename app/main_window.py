@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 
-from PySide6.QtCore import QSettings, Qt, QThread, QTimer
+from PySide6.QtCore import QSettings, Qt, QThread, QTimer, QUrl
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QGuiApplication, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
-    QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget,
+    QSpinBox, QSplitter, QTextEdit, QVBoxLayout, QWidget, QScrollArea, QLayout,
 )
 
 from .drop_area import DropArea, SUPPORTED_EXTENSIONS
@@ -62,9 +63,11 @@ class MainWindow(QMainWindow):
         self.worker: TranscriptionWorker | None = None
         self.result: TranscriptionResult | None = None
         self.settings = QSettings()
+        self._running = False
+        self._closing = False
 
         self.setWindowTitle("Audio Transcribe")
-        self.setMinimumSize(1040, 760)
+        self.setMinimumSize(960, 600)
         self.resize(1120, 780)
         self._build_ui()
         self._restore_settings()
@@ -107,7 +110,12 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
-        splitter.addWidget(self._build_input_panel())
+        input_scroll = QScrollArea()
+        input_scroll.setWidgetResizable(True)
+        input_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        input_scroll.setMinimumWidth(410)
+        input_scroll.setWidget(self._build_input_panel())
+        splitter.addWidget(input_scroll)
         splitter.addWidget(self._build_output_panel())
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 6)
@@ -119,6 +127,7 @@ class MainWindow(QMainWindow):
     def _build_input_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         layout.setContentsMargins(0, 0, 4, 0)
         layout.setSpacing(13)
 
@@ -160,29 +169,30 @@ class MainWindow(QMainWindow):
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(7)
-        for column in range(3):
+        for column in range(2):
             grid.setColumnStretch(column, 1)
         grid.addWidget(QLabel("Motore"), 0, 0)
-        grid.addWidget(QLabel("Modello"), 0, 1)
-        grid.addWidget(QLabel("Lingua"), 0, 2)
+        grid.addWidget(QLabel("Modello"), 2, 0)
+        grid.addWidget(QLabel("Lingua"), 2, 1)
         self.engine_combo = QComboBox()
-        self.engine_combo.addItem("whisper.cpp · rapido", "whisper_cpp")
-        self.engine_combo.addItem("faster-whisper · compatibilità", "faster_whisper")
+        self.engine_combo.addItem("whisper.cpp · CPU, modelli compatti", "whisper_cpp")
+        self.engine_combo.addItem("faster-whisper · GPU NVIDIA / CPU", "faster_whisper")
         self.engine_combo.currentIndexChanged.connect(self._update_engine_options)
         self.model_combo = QComboBox()
         self.model_combo.currentTextChanged.connect(self._update_model_hint)
         self.language_combo = QComboBox()
         for label, code in LANGUAGES:
             self.language_combo.addItem(label, code)
-        grid.addWidget(self.engine_combo, 1, 0)
-        grid.addWidget(self.model_combo, 1, 1)
-        grid.addWidget(self.language_combo, 1, 2)
+        grid.addWidget(self.engine_combo, 1, 0, 1, 2)
+        grid.addWidget(self.model_combo, 3, 0)
+        grid.addWidget(self.language_combo, 3, 1)
         self.model_hint = QLabel()
         self.model_hint.setObjectName("muted")
-        grid.addWidget(self.model_hint, 2, 0, 1, 3)
+        self.model_hint.setWordWrap(True)
+        grid.addWidget(self.model_hint, 4, 0, 1, 2)
 
-        grid.addWidget(QLabel("Operazione"), 3, 0)
-        grid.addWidget(QLabel("Precisione"), 3, 1)
+        grid.addWidget(QLabel("Operazione"), 5, 0)
+        grid.addWidget(QLabel("Precisione"), 5, 1)
         self.task_combo = QComboBox()
         self.task_combo.addItem("Trascrivi", "transcribe")
         self.task_combo.addItem("Traduci in inglese", "translate")
@@ -191,8 +201,8 @@ class MainWindow(QMainWindow):
         self.beam_spin.setValue(5)
         self.beam_spin.setSuffix(" beam")
         self.beam_spin.setToolTip("Valori più alti migliorano la ricerca ma rallentano l'elaborazione")
-        grid.addWidget(self.task_combo, 4, 0)
-        grid.addWidget(self.beam_spin, 4, 1)
+        grid.addWidget(self.task_combo, 6, 0)
+        grid.addWidget(self.beam_spin, 6, 1)
         settings_layout.addLayout(grid)
 
         self.vad_check = QCheckBox("Ignora automaticamente silenzi e rumori")
@@ -224,6 +234,7 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         layout.addWidget(self.progress)
         self.progress_label = QLabel("In attesa di un file")
+        self.progress_label.setWordWrap(True)
         self.progress_label.setObjectName("muted")
         layout.addWidget(self.progress_label)
         layout.addStretch()
@@ -325,6 +336,7 @@ class MainWindow(QMainWindow):
         self.model_combo.setCurrentText(preferred)
         self.model_combo.blockSignals(False)
         self._update_model_hint(preferred)
+        self.beam_spin.setMaximum(5 if self.engine_combo.currentData() == "whisper_cpp" else 10)
         self._update_compute_badge()
 
     def _update_compute_badge(self) -> None:
@@ -351,12 +363,15 @@ class MainWindow(QMainWindow):
             self.load_file(file_path)
 
     def load_file(self, file_path: str) -> None:
+        if self.thread or not self._confirm_discard():
+            return
         path = Path(file_path)
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             QMessageBox.warning(self, "Formato non supportato", "Seleziona un file audio o video supportato.")
             return
         self.file_path = str(path)
         self.result = None
+        self.text_output.clear()
         self.file_label.setText(path.name)
         self.file_label.setToolTip(str(path))
         self.file_meta.setText(f"{path.suffix.upper().lstrip('.')}  ·  {_human_size(path.stat().st_size)}")
@@ -369,10 +384,12 @@ class MainWindow(QMainWindow):
 
     def open_file_folder(self) -> None:
         if self.file_path:
-            QDesktopServices.openUrl(Path(self.file_path).parent.as_uri())
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.file_path).resolve().parent)))
 
     def start_transcription(self) -> None:
         if not self.file_path or self.thread:
+            return
+        if not self._confirm_discard():
             return
         self.result = None
         self.text_output.clear()
@@ -407,11 +424,14 @@ class MainWindow(QMainWindow):
         self.thread.start()
 
     def _set_running(self, running: bool) -> None:
-        self.transcribe_button.setEnabled(bool(self.file_path) and not running)
+        self._running = running
+        self.text_output.setReadOnly(running)
+        self.transcribe_button.setEnabled(bool(self.file_path) and not running and self.thread is None)
         self.cancel_button.setVisible(running)
         for widget in (self.drop_area, self.engine_combo, self.model_combo, self.language_combo, self.task_combo,
                        self.beam_spin, self.vad_check, self.prompt_input):
             widget.setEnabled(not running)
+        self._update_word_count()
 
     def _on_stage_changed(self, stage: str) -> None:
         self.progress_label.setText(stage)
@@ -426,7 +446,7 @@ class MainWindow(QMainWindow):
     def _append_segment(self, segment: TranscriptSegment) -> None:
         cursor = self.text_output.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        if self.text_output.toPlainText():
+        if not self.text_output.document().isEmpty():
             cursor.insertText(" ")
         cursor.insertText(segment.text)
         self.text_output.setTextCursor(cursor)
@@ -440,7 +460,10 @@ class MainWindow(QMainWindow):
 
     def on_finished(self, result: TranscriptionResult, device: str) -> None:
         self.result = result
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100)
         self.text_output.setPlainText(result.text)
+        self.text_output.document().setModified(bool(result.text))
         confidence = f" · confidenza {result.language_probability:.0%}" if result.language_probability else ""
         filtered = (
             f" · {result.filtered_repetitions} ripetizioni filtrate"
@@ -472,13 +495,15 @@ class MainWindow(QMainWindow):
         self.thread = None
         self.worker = None
         self.cancel_button.setEnabled(True)
+        self._set_running(False)
 
     def _update_word_count(self) -> None:
         text = self.text_output.toPlainText().strip()
         words = len(text.split()) if text else 0
         self.metrics_label.setText(f"{words} parole  ·  {len(text)} caratteri")
-        for widget in (self.copy_button, self.export_button, self.clear_button):
-            widget.setEnabled(bool(text))
+        self.copy_button.setEnabled(bool(text))
+        self.export_button.setEnabled(bool(text) and not self._running)
+        self.clear_button.setEnabled(bool(text) and not self._running)
 
     def copy_text(self) -> None:
         text = self.text_output.toPlainText()
@@ -490,10 +515,16 @@ class MainWindow(QMainWindow):
         text = self.text_output.toPlainText().strip()
         if not text:
             return
-        if self.result is None:
-            self.result = TranscriptionResult(text=text)
-        else:
-            self.result.text = text
+        if self._running:
+            return
+        result = replace(self.result, text=text) if self.result else TranscriptionResult(text=text)
+        if extension in (".srt", ".vtt", ".json"):
+            if not result.segments:
+                QMessageBox.information(self, "Timestamp non disponibili", "Per il testo parziale usa l'esportazione TXT.")
+                return
+            if text != " ".join(s.text for s in result.segments).strip():
+                QMessageBox.information(self, "Testo modificato", "Le correzioni non sono allineate ai timestamp originali. Esporta in TXT per conservare il testo modificato.")
+                return
         stem = Path(self.file_path).stem if self.file_path else "trascrizione"
         filters = {".txt": "Documento di testo (*.txt)", ".srt": "Sottotitoli SubRip (*.srt)",
                    ".vtt": "Sottotitoli WebVTT (*.vtt)", ".json": "File JSON (*.json)"}
@@ -506,15 +537,31 @@ class MainWindow(QMainWindow):
         if output_path.suffix.lower() != extension:
             output_path = output_path.with_suffix(extension)
         encoding = "utf-8-sig" if extension == ".txt" else "utf-8"
-        output_path.write_text(export_content(self.result, extension), encoding=encoding)
+        try:
+            output_path.write_text(export_content(result, extension), encoding=encoding)
+        except OSError as exc:
+            QMessageBox.warning(self, "Salvataggio non riuscito", str(exc))
+            return
+        self.text_output.document().setModified(False)
         self.statusBar().showMessage(f"Esportato: {output_path}", 7000)
 
     def clear_output(self) -> None:
+        if self._running or not self._confirm_discard():
+            return
         self.result = None
         self.text_output.clear()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress_label.setText("Pronto per una nuova trascrizione" if self.file_path else "In attesa di un file")
+
+    def _confirm_discard(self) -> bool:
+        if self._closing or self.text_output.document().isEmpty() or not self.text_output.document().isModified():
+            return True
+        return QMessageBox.question(
+            self, "Testo non salvato", "Il testo non è stato esportato. Vuoi eliminarlo?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) == QMessageBox.StandardButton.Yes
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._save_settings()
@@ -529,8 +576,12 @@ class MainWindow(QMainWindow):
                 return
             if self.worker:
                 self.worker.cancel()
+            self._closing = True
             event.ignore()
             self.thread.finished.connect(self.close)
             QTimer.singleShot(0, lambda: self.progress_label.setText("Chiusura in corso…"))
             return
-        event.accept()
+        if self._confirm_discard():
+            event.accept()
+        else:
+            event.ignore()

@@ -83,11 +83,7 @@ class LocalTranscriber:
         self.options = options
         self.device, self.compute_type = detect_compute_device()
 
-        # Limit model size for systems with limited memory
         model_name = options.model_name
-        if self.device == "cpu" and model_name not in ("tiny", "base", "small"):
-            # On CPU, limit to smaller models to avoid memory issues
-            model_name = "base"
 
         try:
             self.model = WhisperModel(
@@ -123,8 +119,8 @@ class LocalTranscriber:
             str(path),
             language=self.options.language,
             task=self.options.task,
-            beam_size=max(1, min(self.options.beam_size, 3)),  # Limit beam_size for memory
-            best_of=max(1, min(self.options.beam_size, 3)),    # Limit best_of for memory
+            beam_size=self.options.beam_size,
+            best_of=self.options.beam_size,
             temperature=(0.0, 0.2, 0.4),
             repetition_penalty=1.12,
             no_repeat_ngram_size=3,
